@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>登录 - Aya 公会战</title>
+<link rel="icon" href="/static/yobot-small.ico">
+<script>document.documentElement.dataset.theme=localStorage.getItem("aya-theme")||"light";</script>
+<link rel="stylesheet" href="/static/panel.css">
+</head>
+<body class="login-body">
+<div class="login-card">
+  <h2><img class="brand-logo" src="/static/yobot-small.ico" alt="">Aya-clanbattle</h2>
+  <p id="msg" class="muted"></p>
+  <form id="form">
+    <label>QQ 号<input type="text" id="qqid" autocomplete="username"></label>
+    <label>密码<input type="password" id="pwd" autocomplete="current-password"></label>
+    <button type="submit" class="primary">登录</button>
+  </form>
+  <div class="tip">没有密码？在 QQ 私聊机器人发送「登录」获取一次性链接，
+  或发送「重置密码」获取临时密码。</div>
+</div>
+<script>
+const msg = document.getElementById('msg');
+const params = new URLSearchParams(location.search);
+if (params.get('error') === 'expired') msg.textContent = '登录链接无效或已过期，请重新获取。';
+document.getElementById('form').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const qqid = document.getElementById('qqid').value.trim();
+  const pwd = document.getElementById('pwd').value;
+  const res = await fetch('/login/api/', {
+    method: 'POST', headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({mode: 'password', qqid: Number(qqid), pwd})
+  });
+  const data = await res.json();
+  if (data.code !== 0) { msg.textContent = data.message; return; }
+  location.href = params.get('callback') || '/';
+});
+</script>
+</body>
+</html>

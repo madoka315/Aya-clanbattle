@@ -1,0 +1,107 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>公会战面板</title>
+<link rel="icon" href="/static/yobot-small.ico">
+<script>document.documentElement.dataset.theme=localStorage.getItem("aya-theme")||"light";</script>
+<link rel="stylesheet" href="/static/panel.css">
+</head>
+<body>
+<nav id="topbar">
+  <span class="brand"><img class="brand-logo" src="/static/yobot-small.ico" alt="Aya 公会战"><span id="guild-name">…</span><button id="guild-switch" hidden title="切换公会" aria-haspopup="menu" aria-expanded="false"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg></button><div id="guild-menu"></div></span>
+  <span id="progress-chip" hidden></span>
+  <span class="spacer"></span>
+  <a href="#" data-tab="panel" class="tab active">面板</a>
+  <a href="#" data-tab="records" class="tab">记录</a>
+  <a href="#" data-tab="stats" class="tab">统计</a>
+  <a href="#" data-tab="setting" class="tab">设置</a>
+  <a href="#" data-tab="help" class="tab">帮助</a>
+  <button id="theme-toggle" title="切换日夜主题">🌙</button>
+  <a href="/logout/" id="logout">登出</a>
+  <i id="tab-ink"></i>
+</nav>
+<div id="toast-box" class="toast-box"></div>
+<main id="app">
+  <!-- 面板 -->
+  <section id="tab-panel">
+    <div id="boss-grid" class="boss-grid"></div>
+    <div id="global-actions" class="ops" style="margin-top:14px"></div>
+  </section>
+  <!-- 记录 -->
+  <section id="tab-records" hidden>
+    <div class="bar">
+      <button id="rec-back" hidden>← 返回</button>
+      <input type="date" id="rec-date">
+      <button id="rec-refresh">刷新</button>
+      <button id="rec-view">按时间</button>
+      <span id="rec-hint" class="muted">点击成员可查看该成员所有出刀记录</span>
+      <button id="rk-zero-page" class="danger" hidden>一键催0刀</button>
+      <button id="rk-mid-page" class="danger" hidden>一键催没出完</button>
+      <span id="rec-summary" class="muted"></span>
+    </div>
+    <div class="table-wrap" id="rec-wrap"><table id="rec-table" class="table"></table></div>
+  </section>
+  <!-- 统计：战报版式 -->
+  <section id="tab-stats" hidden>
+    <div class="report-head">
+      <div class="report-title-row">
+        <h2 id="stats-title">会战战报</h2>
+        <span id="stats-range" class="report-sub"></span>
+        <div class="report-ctrl">
+          <label>档案
+            <select id="stats-bid"><option value="current">当前</option><option value="all">全部</option></select>
+          </label>
+          <button id="stats-refresh">刷新</button>
+        </div>
+      </div>
+      <div id="stats-totals" class="report-totals"></div>
+    </div>
+    <div class="report-block">
+      <div class="report-block-head">每日刀数</div>
+      <div id="chart-days" style="height:300px"></div>
+    </div>
+    <div class="report-block">
+      <div class="report-block-head">每日伤害</div>
+      <div id="chart-dmg" style="height:300px"></div>
+    </div>
+    <div class="report-block">
+      <div class="report-block-head">成员贡献榜<span class="muted">可以点按刀数、总伤害来排序</span></div>
+      <div id="stats-ranking"></div>
+    </div>
+    <div class="report-block">
+      <div class="report-block-head">各王主力<span class="muted">上：刀数 · 下：完整刀均伤（不含尾/补）</span></div>
+      <div id="stats-boss-tops" class="boss-top-grid"></div>
+    </div>
+    <div class="report-block">
+      <div class="report-block-head">出刀时刻分布<span class="muted">按本档案全部出刀，5 点换日对齐</span></div>
+      <div id="chart-hours" style="height:260px"></div>
+    </div>
+    <div class="report-block">
+      <div class="report-block-head">最速下班榜<span class="muted">每天出满 3 刀的完成时刻，谁最早下班</span></div>
+      <div id="stats-fastest"></div>
+    </div>
+    <div class="report-block">
+      <div class="report-block-head">最慢下班榜<span class="muted">每天出满 3 刀的完成时刻，谁最晚下班</span></div>
+      <div id="stats-slowest"></div>
+    </div>
+  </section>
+  <!-- 设置 -->
+  <section id="tab-setting" hidden></section>
+  <!-- 帮助 -->
+  <section id="tab-help" hidden>
+    <div class="help-bar">
+      <span class="help-title">公会战帮助文档</span>
+      <a class="help-open" href="https://docs.madoka.cafe/gong-hui-zhan-gong-neng"
+         target="_blank" rel="noopener">在新标签页打开 ↗</a>
+    </div>
+    <iframe id="help-frame" class="help-frame" title="公会战帮助文档"
+            data-src="https://docs.madoka.cafe/gong-hui-zhan-gong-neng"></iframe>
+  </section>
+</main>
+<dialog id="dlg"></dialog>
+<script src="/static/panel.js"></script>
+<script src="/static/lib/echarts.min.js"></script>
+</body>
+</html>
