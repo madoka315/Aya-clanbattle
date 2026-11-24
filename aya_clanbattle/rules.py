@@ -219,12 +219,11 @@ def challenge(cfg: GameConfig, state: GuildState, operator: int, defeat: bool,
         behalf = None
 
     ch = find_challenger(state, qqid)
-    # 同王报刀会走"取消原申请→重建申请"：先留住补偿标记，
-    # 否则补偿申请被重建成普通刀（网页王卡报刀固定带 boss_num）
-    carried_comp = bool(ch and ch.is_continue and boss_num
+    # 昨日补录是纯历史记录：不使用、也不消耗今天的申请与补偿标记
+    carried_comp = bool((not previous_day) and ch and ch.is_continue and boss_num
                         and str(boss_num) == ch.boss_num)
-    # 已申请且指定了报刀 boss → 先取消原申请
-    if boss_num and ch:
+    # 已申请且指定了报刀 boss → 先取消原申请（昨日补录不动今天的申请）
+    if (not previous_day) and boss_num and ch:
         cancel_blade(state, qqid)
         ch = None
     # 已申请未指定 boss → 用申请的 boss
@@ -234,20 +233,31 @@ def challenge(cfg: GameConfig, state: GuildState, operator: int, defeat: bool,
         raise GroupError("又不申请出刀又不说打哪个王，报啥子刀啊 (╯‵□′)╯︵┻━┻")
     boss_num = str(boss_num)
 
-    if ch is None:
-        apply_for_challenge(cfg, state, qqid, boss_num, is_continue=is_continue,
-                            behalf=behalf, records_today=records_today, name_of=name_of)
-
-    cycle, pool = _cycle_and_pool(state, boss_num)
-    applied = find_challenger(state, qqid)
-    records = records_target if records_target is not None else (records_today or [])
+    # 昨日的配额/补偿按目标日记录算；今天的行为保持不变
+    if previous_day:
+        records = records_target or []
+    else:
+        records = records_target if records_target is not None else (records_today or [])
     finished, _tail, _used, comp_left = _blade_stats(records)
-    # 残留补偿申请自愈：补偿刀按当日记录结算（不跨日），新一天已无补偿时
-    # 申请自动降级为普通刀，避免普通报刀被「您没有补偿刀」卡死
-    is_continue = is_continue or (comp_left > 0 and (
-        carried_comp or bool(applied and applied.is_continue)))
 
-    if (not defeat) and damage >= pool[boss_num]:
+    if previous_day:
+        cycle, pool = state.boss_cycle, state.now
+        # 昨日：完整刀额度用尽且有补偿 → 自动按补偿刀记
+        is_continue = is_continue or (comp_left != 0 and finished + comp_left >= 3)
+        live = pool.get(boss_num, 0) > 0
+    else:
+        if ch is None:
+            apply_for_challenge(cfg, state, qqid, boss_num, is_continue=is_continue,
+                                behalf=behalf, records_today=records_today, name_of=name_of)
+        cycle, pool = _cycle_and_pool(state, boss_num)
+        applied = find_challenger(state, qqid)
+        # 残留补偿申请自愈：补偿刀按当日记录结算（不跨日），新一天已无补偿时
+        # 申请自动降级为普通刀，避免普通报刀被「您没有补偿刀」卡死
+        is_continue = is_continue or (comp_left > 0 and (
+            carried_comp or bool(applied and applied.is_continue)))
+        live = True
+
+    if (not previous_day) and (not defeat) and damage >= pool[boss_num]:
         raise InputError("伤害超出剩余血量，如击败请使用尾刀")
 
     d, t = pcr_d, pcr_t
@@ -264,14 +274,27 @@ def challenge(cfg: GameConfig, state: GuildState, operator: int, defeat: bool,
             raise InputError("昨日上报次数已达到3次")
         raise InputError("今日上报次数已达到3次")
 
+    # 昨日只在“当前周目的这个王还活着”时同步实时状态；
+    # 王已进入下一周目/已击破时只写历史记录，不碰今天的血量
+    affects_state = (not previous_day) or live
     if defeat:
         boss_health_remain = 0
-        challenge_damage = pool[boss_num]
-        pool[boss_num] = 0
+        if affects_state:
+            challenge_damage = pool[boss_num]
+            pool[boss_num] = 0
+        else:
+            challenge_damage = 0
     else:
-        boss_health_remain = pool[boss_num] - damage
         challenge_damage = damage
-        pool[boss_num] -= damage
+        if previous_day:
+            boss_health_remain = 1  # 哨兵值：只表示“这一刀不是尾刀”
+            if affects_state and damage < pool[boss_num]:
+                pool[boss_num] -= damage
+            else:
+                affects_state = False  # 伤害超过当前血量：只记历史，不动实时状态
+        else:
+            boss_health_remain = pool[boss_num] - damage
+            pool[boss_num] -= damage
 
     result = RuleResult()
     result.records.append(ChallengeRecord(
@@ -279,14 +302,19 @@ def challenge(cfg: GameConfig, state: GuildState, operator: int, defeat: bool,
         health_remain=boss_health_remain, damage=challenge_damage,
         is_continue=is_continue, behalf=behalf))
 
-    if defeat:
+    if defeat and affects_state:
         all_clear = sum(1 for hp in state.now.values() if hp == 0)
         if all_clear == 5:
-            state.boss_cycle += 1
+            old_cycle = state.boss_cycle
+            # 跨阶段时，新周目的全部王都因升周目而重新可打，需要补发预约提醒
+            phase_changed = (cfg.level_by_cycle_of(state.game_server, old_cycle)
+                             != cfg.level_by_cycle_of(state.game_server, old_cycle + 1))
+            state.boss_cycle = old_cycle + 1
             next_level = cfg.level_by_cycle_of(state.game_server, state.boss_cycle + 1)
             for b in BOSS_NUMS:                      # 下周目血量挪到现在
+                moved_zero = state.nxt[b] == 0
                 state.now[b] = state.nxt[b]
-                if state.nxt[b] == 0:
+                if moved_zero or phase_changed:
                     result.notices.append(("subscribe_remind", b))
             for i, b in enumerate(BOSS_NUMS):        # 新下周目血量
                 state.nxt[b] = cfg.boss_hp[state.game_server][next_level][i]
@@ -295,14 +323,15 @@ def challenge(cfg: GameConfig, state: GuildState, operator: int, defeat: bool,
 
     # 收尾后的状态清理与通知（先捕获挂树名单再清挑战状态）
     if defeat:
-        on_tree = [int(q) for q, c in state.challengers.items()
-                   if c.boss_num == boss_num and c.tree]
-        if on_tree:
-            result.notices.append(("tree_down", boss_num, on_tree))
-        cancel_blade(state, qqid, cancel_type=2, boss_num=boss_num)
-        if check_next_boss(cfg, state, boss_num):
-            result.notices.append(("subscribe_remind", boss_num))
-    else:
+        if affects_state:
+            on_tree = [int(q) for q, c in state.challengers.items()
+                       if c.boss_num == boss_num and c.tree]
+            if on_tree:
+                result.notices.append(("tree_down", boss_num, on_tree))
+            cancel_blade(state, qqid, cancel_type=2, boss_num=boss_num)
+            if check_next_boss(cfg, state, boss_num):
+                result.notices.append(("subscribe_remind", boss_num))
+    elif not previous_day:
         try:
             cancel_blade(state, qqid)
         except RuleError:
@@ -310,15 +339,16 @@ def challenge(cfg: GameConfig, state: GuildState, operator: int, defeat: bool,
 
     nik = name_of(qqid)
     behalf_nik = f"（{name_of(behalf)}代）" if behalf else ""
+    day_word = "昨日" if previous_day else "今日"
     if defeat:
         # 补偿收尾：已完成刀数+1、补偿余量-1；普通收尾：已完成不加、补偿余量+1
         msg = (f"{nik}{behalf_nik}对{boss_num}号boss造成了{challenge_damage:,}点伤害，"
-               f"击败了boss\n（今日已完成{finished + 1 if is_continue else finished}刀，"
+               f"击败了boss\n（{day_word}已完成{finished + 1 if is_continue else finished}刀，"
                f"还有补偿刀{comp_left - 1 if is_continue else comp_left + 1}刀，"
                f"本刀是{'尾余刀' if is_continue else '收尾刀'}）\n")
     else:
         msg = (f"{nik}{behalf_nik}对{boss_num}号boss造成了{challenge_damage:,}点伤害\n"
-               f"（今日已出完整刀{finished + 1}刀，"
+               f"（{day_word}已出完整刀{finished + 1}刀，"
                f"还有补偿刀{comp_left - 1 if is_continue else comp_left}刀，"
                f"本刀是{'剩余刀' if is_continue else '完整刀'}）\n")
     msg += "\n".join(_challenge_lines(cfg, state, boss_num, name_of))
