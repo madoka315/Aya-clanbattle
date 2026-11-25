@@ -345,6 +345,32 @@ def _rr_pts(box, radii):
     return out
 
 
+def _alpha_rounded_rect(im, box, radius, color, alpha, square_left=False):
+    """把圆角矩形以半透明方式叠到 RGB 图上（低饱和“本次伤害”残影/贴纸通用水印层）。
+    square_left=True 时左侧改直角（与当前血条填充直接相接，不留圆角缝）。"""
+    x0, y0, x1, y1 = (int(v) for v in box)
+    w, h = max(1, x1 - x0), max(1, y1 - y0)
+    tile = Image.new("RGBA", (w, h), (0, 0, 0, 0))
+    d = ImageDraw.Draw(tile)
+    ink = tuple(color) + (alpha,)
+    d.rounded_rectangle((0, 0, w - 1, h - 1), radius=radius, fill=ink)
+    if square_left:
+        d.rectangle((0, 0, radius, h - 1), fill=ink)
+    im.paste(Image.alpha_composite(im.crop((x0, y0, x1, y1)).convert("RGBA"), tile)
+             .convert("RGB"), (x0, y0))
+
+
+def _tilt_text(text, font, fill, stroke_width=0, stroke_fill=None, angle=-2):
+    """斜置文字贴纸（RPG 跳伤）：透明底+描边+轻微旋转，返回 RGBA 图。"""
+    pad = stroke_width + 6
+    scratch = ImageDraw.Draw(Image.new("RGB", (8, 8)))
+    l, t, r, b = scratch.textbbox((0, 0), text, font=font, stroke_width=stroke_width)
+    tmp = Image.new("RGBA", (int(r - l + pad * 2), int(b - t + pad * 2)), (0, 0, 0, 0))
+    ImageDraw.Draw(tmp).text((pad - l, pad - t), text, font=font, fill=tuple(fill) + (255,),
+                             stroke_width=stroke_width, stroke_fill=stroke_fill)
+    return tmp.rotate(angle, expand=True, resample=Image.BICUBIC)
+
+
 def _sticker_rect(draw, box, radii, fill=None, outline=None, width=1):
     """贴纸圆角矩形（web 手帖签名形：左上小圆角 3/4px、其余 10~12px）。"""
     pts = _rr_pts(box, radii)
@@ -396,16 +422,24 @@ def _card_ctx(u):
             "f_num_b": load_font_num_bold(u(22)), "f_num": load_font_num(u(12)),
             "f_cjk": load_font(u(11.5)), "f_small": load_font(u(12.5)),
             "f_chip": load_font(u(12.5)), "f_chip_bold": load_font_bold(u(12.5)),
-            "f_tiny": load_font(u(10.5)), "f_num_b_cjk": load_font_bold(u(22))}
+            "f_tiny": load_font(u(10.5)), "f_num_b_cjk": load_font_bold(u(22)),
+            "f_hit": load_font_num_bold(u(22)),
+            "f_hit_cjk": load_font_bold(u(12))}
 
 
-def _boss_card_measure(b: dict, ctx: dict) -> dict:
-    """boss 卡测量：pct/chips 分段与装箱/高度（状态图与单卡图共用）。"""
+def _boss_card_measure(b: dict, ctx: dict, hit: dict | None = None) -> dict:
+    """boss 卡测量：pct/chips 分段与装箱/高度（状态图与单卡图共用）。
+    hit 非空时在血条下追加一行“跳伤”，血条另画一段低饱和的本次伤害残影。"""
     u, scratch = ctx["u"], ctx["scratch"]
     inner, pad = ctx["inner"], ctx["pad"]
     f_chip, f_chip_bold = ctx["f_chip"], ctx["f_chip_bold"]
     killed = b["health"] == 0 and not b["is_next"]
     pct = 0 if killed or not b["full"] else max(0, min(100, round(b["health"] / b["full"] * 100)))
+    ghost_pct = 0
+    if hit and not hit.get("defeat") and not b["is_next"] and b["full"]:
+        ghost_pct = max(0, min(100, round(hit["before"] / b["full"] * 100)))
+        if ghost_pct <= pct:
+            ghost_pct = 0
     chips = []
     for s in b["subs"]:
         # web subChip：<b>预约</b>名字:note，teal 底（QQ 侧加头像，名字前补空格分隔）
@@ -446,12 +480,15 @@ def _boss_card_measure(b: dict, ctx: dict) -> dict:
         if cur_row:
             rows_of_chips.append(cur_row)
     chips_h = (u(25) + u(5)) * len(rows_of_chips) - u(5) if rows_of_chips else u(19)
-    # 纵向节奏（同 web：头 46 → hp 行 → 血条 → chips）
+    # 纵向节奏（同 web：头 46 → hp 行 → 血条 → chips），跳伤行插在血条与 chips 之间
     h = pad + u(46) + u(22) + u(7) + u(14) + u(6) + chips_h + pad
+    if hit:
+        h += u(28)
     return {"num": b["num"], "name": b["name"], "icon": b.get("icon", "0"),
             "cycle": b["cycle"], "is_next": b["is_next"], "health": b["health"],
-            "full": b["full"], "pct": pct, "killed": killed,
-            "rows_of_chips": rows_of_chips, "chips_empty": not chips, "h": h}
+            "full": b["full"], "pct": pct, "killed": killed, "ghost_pct": ghost_pct,
+            "hit": hit, "rows_of_chips": rows_of_chips,
+            "chips_empty": not chips, "h": h}
 
 
 def render_panel_status(title: str, date_str: str, summary: dict, bosses: List[dict]) -> bytes:
@@ -614,6 +651,7 @@ def _boss_card_draw(im, draw, x0, y, c, ctx):
     f_num_b, f_num, f_cjk = ctx["f_num_b"], ctx["f_num"], ctx["f_cjk"]
     f_b_cjk = ctx["f_num_b_cjk"]  # 血量「亿」字（web hp-now 700 重的 CJK 回退）
     f_small, f_chip, f_tiny = ctx["f_small"], ctx["f_chip"], ctx["f_tiny"]
+    f_hit, f_hit_cjk = ctx["f_hit"], ctx["f_hit_cjk"]
     _sticker_rect(draw, (x0, y, x0 + card_w, y + c["h"]), (u(4), u(12), u(12), u(12)),
                   fill=_IMG_PANEL, outline=_IMG_BORDER, width=u(1))
     tp = _tape_rgba(u(64), u(14))  # web .boss::before：64×14 @ left18 top-6
@@ -666,20 +704,48 @@ def _boss_card_draw(im, draw, x0, y, c, ctx):
                                radius=u(3), fill=_IMG_INK3)
         draw.text((x0 + card_w - pad - bw / 2, hb - u(7)), "击破", font=f_tiny,
                   fill="#ffffff", anchor="mm")
-    # 血条（圆角虚线轮廓 + 填充 + 白刻度）
+    # 血条（圆角虚线轮廓 + 填充 + 白刻度）；有本次伤害残影时，填充与残影接壤处用直角
     by = hb + u(7)
+    hit = c.get("hit")
+    has_ghost = c.get("ghost_pct", 0) > c["pct"]
     draw.rounded_rectangle((ix, by, ix + inner, by + u(14)), radius=u(7), fill=(243, 230, 226))
     _dashed_rounded_rect(draw, (ix, by, ix + inner, by + u(14)), u(7), _IMG_RULE,
                          dash=u(5), gap=u(4), width=u(1))
+    bar_l = ix + u(2)
+    fill_r = bar_l
     if c["pct"] > 0:
         fw = max(u(5), int((inner - u(4)) * c["pct"] / 100))
+        fill_r = bar_l + fw
         fill_c = _IMG_OK if c["pct"] >= 62 else (_IMG_WARN_C if c["pct"] >= 25 else _IMG_SHU)
-        draw.rounded_rectangle((ix + u(2), by + u(2), ix + u(2) + fw, by + u(12)), radius=u(5), fill=fill_c)
+        draw.rounded_rectangle((bar_l, by + u(2), fill_r, by + u(12)), radius=u(5), fill=fill_c)
+        if has_ghost:  # 与残影相接的一侧压成直角
+            draw.rectangle((fill_r - u(5), by + u(2), fill_r, by + u(12)), fill=fill_c)
     for tick in (25, 50, 75):
         txp = ix + int(inner * tick / 100)
         draw.line((txp, by + u(2), txp, by + u(12)), fill=(255, 255, 255), width=u(1))
-    # chips 流式
-    cy2 = by + u(14) + u(6)
+    # 本次伤害：血条上低饱和残影（被打掉的那段，与当前血量直接相接）+ 下方「头像 -伤害」跳伤
+    if has_ghost:
+        gx1 = bar_l + int((inner - u(4)) * c["ghost_pct"] / 100)
+        if gx1 > fill_r:
+            _alpha_rounded_rect(im, (fill_r, by + u(2), gx1, by + u(12)), u(5), _IMG_SHU, 92,
+                                square_left=True)
+    # chips 流式（跳伤行在血条与 chips 之间）
+    cy2 = by + u(14) + u(6) + (u(28) if hit else 0)
+    if hit:
+        row_mid = by + u(32)
+        av = _round_avatar(hit["qqid"], hit.get("name") or "?", u(20))
+        im.paste(av, (ix, int(row_mid - u(10))), av)
+        hx = ix + u(25)
+        if hit.get("defeat"):
+            bw = int(scratch.textlength("击败", font=f_hit_cjk)) + u(12)
+            draw.rounded_rectangle((hx, int(row_mid - u(10)), hx + bw, int(row_mid + u(10))),
+                                   radius=u(5), fill=_IMG_SHU)
+            draw.text((hx + bw / 2, row_mid + u(0.5)), "击败", font=f_hit_cjk,
+                      fill="#ffffff", anchor="mm")
+            hx += bw + u(7)
+        dmg = _tilt_text(f"-{hit['damage']:,}", f_hit, _IMG_SHU,
+                         stroke_width=u(1.5), stroke_fill=_IMG_GOLD)
+        im.paste(dmg, (int(hx), int(row_mid - dmg.height / 2)), dmg)
     if c["chips_empty"]:
         draw.text((ix, cy2 + u(12)), "暂无挑战 · 暂无预约", font=f_small, fill=_IMG_INK3)
     for chips_row in c["rows_of_chips"]:
@@ -699,8 +765,9 @@ def _boss_card_draw(im, draw, x0, y, c, ctx):
         cy2 += u(25) + u(5)
 
 
-def render_boss_card(boss: dict) -> bytes:
-    """单个 boss 卡图——群聊申请出刀/报刀/尾刀/挂树等交互指令回图（=状态图卡片同款）。"""
+def render_boss_card(boss: dict, hit: dict | None = None) -> bytes:
+    """单个 boss 卡图——群聊申请出刀/报刀/尾刀/挂树等交互指令回图（=状态图卡片同款）。
+    hit: 本次报刀信息（qqid/name/damage/before/defeat），用于血条残影与跳伤。"""
     S = 3
     K = 1.3
 
@@ -708,7 +775,7 @@ def render_boss_card(boss: dict) -> bytes:
         return int(v * S * K)
 
     ctx = _card_ctx(u)
-    c = _boss_card_measure(boss, ctx)
+    c = _boss_card_measure(boss, ctx, hit)
     margin, top_pad = u(12), u(8)  # 顶部留胶带出挑
     W = margin * 2 + ctx["card_w"]
     H = margin + top_pad + c["h"] + margin

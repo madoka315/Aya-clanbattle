@@ -116,7 +116,6 @@ def _challenge_lines(cfg, state, boss_num, name_of) -> list[str]:
     cycle = state.boss_cycle + 1 if now_hp == 0 else state.boss_cycle
     lines.append(f"{cycle}周目{boss_num}王，剩余{real_hp:,}血")
     if now_hp == 0 and not check_next_boss(cfg, state, boss_num):
-        lines.append("该boss无法继续挑战")
         return lines
     boss_challengers = {q: c for q, c in state.challengers.items()
                         if c.boss_num == boss_num}
@@ -337,20 +336,20 @@ def challenge(cfg: GameConfig, state: GuildState, operator: int, defeat: bool,
         except RuleError:
             pass
 
-    nik = name_of(qqid)
-    behalf_nik = f"（{name_of(behalf)}代）" if behalf else ""
-    day_word = "昨日" if previous_day else "今日"
+    # 精简一行概览：伤害/击败已由回图（血条变化+跳伤）表达，文本只留刀数信息
     if defeat:
         # 补偿收尾：已完成刀数+1、补偿余量-1；普通收尾：已完成不加、补偿余量+1
-        msg = (f"{nik}{behalf_nik}对{boss_num}号boss造成了{challenge_damage:,}点伤害，"
-               f"击败了boss\n（{day_word}已完成{finished + 1 if is_continue else finished}刀，"
-               f"还有补偿刀{comp_left - 1 if is_continue else comp_left + 1}刀，"
-               f"本刀是{'尾余刀' if is_continue else '收尾刀'}）\n")
+        blade_word = "尾余刀" if is_continue else "收尾刀"
+        done = finished + 1 if is_continue else finished
+        comp_now = comp_left - 1 if is_continue else comp_left + 1
     else:
-        msg = (f"{nik}{behalf_nik}对{boss_num}号boss造成了{challenge_damage:,}点伤害\n"
-               f"（{day_word}已出完整刀{finished + 1}刀，"
-               f"还有补偿刀{comp_left - 1 if is_continue else comp_left}刀，"
-               f"本刀是{'剩余刀' if is_continue else '完整刀'}）\n")
+        blade_word = "剩余刀" if is_continue else "完整刀"
+        done = finished + 1
+        comp_now = comp_left - 1 if is_continue else comp_left
+    parts = [f"⚔️{'昨日' if previous_day else ''}{blade_word}", f"完成{done}刀"]
+    if comp_now > 0:
+        parts.append(f"剩{comp_now}刀补")
+    msg = " · ".join(parts) + "\n"
     msg += "\n".join(_challenge_lines(cfg, state, boss_num, name_of))
     result.reply = msg
     result.pcrdate, result.pcrtime = d, t

@@ -385,8 +385,9 @@ class ClanBattleService:
                 "challengers": chs, "subs": subs}
 
     async def _with_boss_card(self, st, boss_num, texts: list,
-                              keep_text: bool = True) -> list:
-        """boss 交互指令成功后回卡图；keep_text=False 时仅回图（通知类消息保留）。"""
+                              keep_text: bool = True, hit: dict | None = None) -> list:
+        """boss 交互指令成功后回卡图；keep_text=False 时仅回图（通知类消息保留）。
+        hit 非空时在图上叠加本次伤害（血条残影+跳伤）。"""
         try:
             i = int(boss_num) - 1
             if not 0 <= i < 5:
@@ -396,7 +397,7 @@ class ClanBattleService:
             await images.ensure_avatars([c["qqid"] for c in card["challengers"]]
                                         + [s["qqid"] for s in card["subs"]],
                                         timeout=3.0)
-            img = images.render_boss_card(card)
+            img = images.render_boss_card(card, hit=hit)
             cq = images.to_cq_image(img)
             if not keep_text:
                 return [cq] + list(texts[1:])
@@ -508,13 +509,23 @@ class ClanBattleService:
         real = int(behalf) if behalf else user_id
         ch = st.challengers.get(str(real))
         bn = boss_num or (ch.boss_num if ch else None)  # 尾刀会消掉申请，先取
+        before_hp = 0
+        if bn:
+            now_hp = st.now.get(str(bn), 0)
+            before_hp = now_hp if now_hp > 0 else st.nxt.get(str(bn), 0)
         _, texts = self.do_challenge(
             gid, user_id, defeat=defeat, damage=damage,
             behalfed=int(behalf) if behalf else None,
             is_continue=is_continue, boss_num=boss_num, previous_day=previous_day)
         if bn:
             # do_challenge 内部另取状态并变更（_flush 落库），回图必须重取最新态
-            texts = await self._with_boss_card(self._state(gid), bn, texts)
+            hit = None
+            if not previous_day and before_hp > 0:
+                dmg = before_hp if defeat else int(damage or 0)
+                if dmg > 0:
+                    hit = {"qqid": real, "name": self._name_of(real), "damage": dmg,
+                           "before": before_hp, "defeat": defeat}
+            texts = await self._with_boss_card(self._state(gid), bn, texts, hit=hit)
         return texts
 
     # ------------------------------------------------------------ 6 撤销
