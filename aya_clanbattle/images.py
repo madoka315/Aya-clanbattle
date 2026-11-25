@@ -436,7 +436,8 @@ def _boss_card_measure(b: dict, ctx: dict, hit: dict | None = None) -> dict:
     killed = b["health"] == 0 and not b["is_next"]
     pct = 0 if killed or not b["full"] else max(0, min(100, round(b["health"] / b["full"] * 100)))
     ghost_pct = 0
-    if hit and not hit.get("defeat") and not b["is_next"] and b["full"]:
+    # 下周目(当前周目该王已倒)也要画残影：非击败刀的血量变化同样发生在这一条血条上
+    if hit and not hit.get("defeat") and b["full"]:
         ghost_pct = max(0, min(100, round(hit["before"] / b["full"] * 100)))
         if ghost_pct <= pct:
             ghost_pct = 0
