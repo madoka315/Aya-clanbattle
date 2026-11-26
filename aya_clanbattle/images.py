@@ -749,7 +749,7 @@ def _boss_card_draw(im, draw, x0, y, c, ctx):
             draw.text((hx + bw / 2, row_mid + u(0.5)), "击败", font=f_hit_cjk,
                       fill="#ffffff", anchor="mm")
             hx += bw + u(7)
-        dmg = _tilt_text(f"-{hit['damage']:,}", f_hit, _IMG_GOLD,
+        dmg = _tilt_text(f"-{hit['damage']:,}", f_hit, _IMG_TAPE_PEACH,
                          stroke_width=u(1.5), stroke_fill=_IMG_ACCENT_S)
         im.paste(dmg, (int(hx), int(row_mid - dmg.height / 2)), dmg)
     if c["chips_empty"]:
@@ -826,6 +826,7 @@ _IMG_GOLD = (168, 128, 42)
 _IMG_INK3 = (185, 159, 164)    # ink-3
 _IMG_WARN_C = (199, 142, 58)   # warn 蜂蜜橙
 _IMG_WARN_TINT = (247, 239, 221)  # warn-tint #f7efdd（挂树 chip 黄底）
+_IMG_TAPE_PEACH = (255, 182, 156)  # 卡头和纸胶带的蜜桃黄（跳伤填充复用）
 
 
 def _blob_mask(size: int) -> Image.Image:
