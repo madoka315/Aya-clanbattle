@@ -361,12 +361,13 @@ def _alpha_rounded_rect(im, box, radius, color, alpha, square_left=False):
 
 
 def _tilt_text(text, font, fill, stroke_width=0, stroke_fill=None, angle=-2):
-    """斜置文字贴纸：透明底 + 单色填充 + 描边，返回 RGBA 图。"""
+    """斜置文字贴纸：透明底 + 单色填充（可带透明度）+ 描边，返回 RGBA 图。"""
     pad = stroke_width + 6
     scratch = ImageDraw.Draw(Image.new("RGB", (8, 8)))
     l, t, r, b = scratch.textbbox((0, 0), text, font=font, stroke_width=stroke_width)
     tmp = Image.new("RGBA", (int(r - l + pad * 2), int(b - t + pad * 2)), (0, 0, 0, 0))
-    ImageDraw.Draw(tmp).text((pad - l, pad - t), text, font=font, fill=tuple(fill) + (255,),
+    ink = tuple(fill) if len(fill) == 4 else tuple(fill) + (255,)
+    ImageDraw.Draw(tmp).text((pad - l, pad - t), text, font=font, fill=ink,
                              stroke_width=stroke_width, stroke_fill=stroke_fill)
     return tmp.rotate(angle, expand=True, resample=Image.BICUBIC)
 
@@ -749,7 +750,7 @@ def _boss_card_draw(im, draw, x0, y, c, ctx):
             draw.text((hx + bw / 2, row_mid + u(0.5)), "击败", font=f_hit_cjk,
                       fill="#ffffff", anchor="mm")
             hx += bw + u(7)
-        dmg = _tilt_text(f"-{hit['damage']:,}", f_hit, _IMG_TAPE_PEACH,
+        dmg = _tilt_text(f"-{hit['damage']:,}", f_hit, _IMG_TAPE_PEACH + (184,),
                          stroke_width=u(1.5), stroke_fill=_IMG_ACCENT_S)
         im.paste(dmg, (int(hx), int(row_mid - dmg.height / 2)), dmg)
     if c["chips_empty"]:
