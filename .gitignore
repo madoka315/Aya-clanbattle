@@ -14,8 +14,10 @@ NUL
 # 运行期个人数据（头像缓存、演示库等）
 data/
 
-# 字体体积大且带授权限制，按 README 自行放置
-aya_clanbattle/fonts/
+# 字体体积大且带授权限制，按 README 自行放置；仅内置 OFL 授权的跳伤字体
+aya_clanbattle/fonts/*
+!aya_clanbattle/fonts/LilitaOne-Regular.ttf
+!aya_clanbattle/fonts/LilitaOne-OFL.txt
 
 # 仅本地使用的测试 / 演示 / 指令审查脚本
 tests/

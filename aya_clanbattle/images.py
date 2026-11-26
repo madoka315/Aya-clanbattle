@@ -360,16 +360,32 @@ def _alpha_rounded_rect(im, box, radius, color, alpha, square_left=False):
              .convert("RGB"), (x0, y0))
 
 
-def _tilt_text(text, font, fill, stroke_width=0, stroke_fill=None, angle=-2):
-    """斜置文字贴纸：透明底 + 单色填充（可带透明度）+ 描边，返回 RGBA 图。"""
-    pad = stroke_width + 6
+def _damage_text(text, font, stroke_w):
+    """跳伤数字：樱色渐变字身 + 墨色粗描边 + 柔和投影（Lilita One，不倾斜）。"""
+    top, bottom = (255, 247, 250), (246, 199, 214)
+    pad = stroke_w + 8
     scratch = ImageDraw.Draw(Image.new("RGB", (8, 8)))
-    l, t, r, b = scratch.textbbox((0, 0), text, font=font, stroke_width=stroke_width)
-    tmp = Image.new("RGBA", (int(r - l + pad * 2), int(b - t + pad * 2)), (0, 0, 0, 0))
-    ink = tuple(fill) if len(fill) == 4 else tuple(fill) + (255,)
-    ImageDraw.Draw(tmp).text((pad - l, pad - t), text, font=font, fill=ink,
-                             stroke_width=stroke_width, stroke_fill=stroke_fill)
-    return tmp.rotate(angle, expand=True, resample=Image.BICUBIC)
+    l, t, r, b = scratch.textbbox((0, 0), text, font=font, stroke_width=stroke_w)
+    w, h = int(r - l + pad * 2) + 8, int(b - t + pad * 2) + 10
+    pos = (pad - l, pad - t)
+    tmp = Image.new("RGBA", (w, h), (0, 0, 0, 0))
+    sh = Image.new("RGBA", (w, h), (0, 0, 0, 0))
+    ImageDraw.Draw(sh).text((pos[0] + 3, pos[1] + 4), text, font=font,
+                            fill=(46, 28, 16, 110))
+    tmp.alpha_composite(sh.filter(ImageFilter.GaussianBlur(3)))
+    ImageDraw.Draw(tmp).text(pos, text, font=font, fill=None, stroke_width=stroke_w,
+                             stroke_fill=_IMG_INK + (255,))
+    grad = Image.new("RGBA", (w, h))
+    gd = ImageDraw.Draw(grad)
+    for yy in range(h):
+        k = yy / max(1, h - 1)
+        gd.line((0, yy, w, yy), fill=(round(top[0] + (bottom[0] - top[0]) * k),
+                                      round(top[1] + (bottom[1] - top[1]) * k),
+                                      round(top[2] + (bottom[2] - top[2]) * k), 255))
+    mask = Image.new("L", (w, h), 0)
+    ImageDraw.Draw(mask).text(pos, text, font=font, fill=255)
+    tmp.paste(grad, (0, 0), mask)
+    return tmp
 
 
 def _sticker_rect(draw, box, radii, fill=None, outline=None, width=1):
@@ -424,7 +440,7 @@ def _card_ctx(u):
             "f_cjk": load_font(u(11.5)), "f_small": load_font(u(12.5)),
             "f_chip": load_font(u(12.5)), "f_chip_bold": load_font_bold(u(12.5)),
             "f_tiny": load_font(u(10.5)), "f_num_b_cjk": load_font_bold(u(22)),
-            "f_hit": load_font_num_bold(u(22)),
+            "f_hit_damage": load_font_damage(u(23)),
             "f_hit_cjk": load_font_bold(u(12))}
 
 
@@ -490,7 +506,7 @@ def _boss_card_measure(b: dict, ctx: dict, hit: dict | None = None) -> dict:
     # 纵向节奏（同 web：头 46 → hp 行 → 血条 → chips），跳伤行插在血条与 chips 之间
     h = pad + u(46) + u(22) + u(7) + u(14) + u(6) + chips_h + pad
     if hit:
-        h += u(28)
+        h += u(36)
     return {"num": b["num"], "name": b["name"], "icon": b.get("icon", "0"),
             "cycle": b["cycle"], "is_next": b["is_next"], "health": b["health"],
             "full": b["full"], "pct": pct, "killed": killed, "ghost_pct": ghost_pct,
@@ -658,7 +674,7 @@ def _boss_card_draw(im, draw, x0, y, c, ctx):
     f_num_b, f_num, f_cjk = ctx["f_num_b"], ctx["f_num"], ctx["f_cjk"]
     f_b_cjk = ctx["f_num_b_cjk"]  # 血量「亿」字（web hp-now 700 重的 CJK 回退）
     f_small, f_chip, f_tiny = ctx["f_small"], ctx["f_chip"], ctx["f_tiny"]
-    f_hit, f_hit_cjk = ctx["f_hit"], ctx["f_hit_cjk"]
+    f_hit_cjk = ctx["f_hit_cjk"]
     _sticker_rect(draw, (x0, y, x0 + card_w, y + c["h"]), (u(4), u(12), u(12), u(12)),
                   fill=_IMG_PANEL, outline=_IMG_BORDER, width=u(1))
     tp = _tape_rgba(u(64), u(14))  # web .boss::before：64×14 @ left18 top-6
@@ -737,9 +753,10 @@ def _boss_card_draw(im, draw, x0, y, c, ctx):
             _alpha_rounded_rect(im, (fill_r, by + u(2), gx1, by + u(12)), u(5), _IMG_SHU, 92,
                                 square_left=True)
     # chips 流式（跳伤行在血条与 chips 之间）
-    cy2 = by + u(14) + u(6) + (u(28) if hit else 0)
+    row_h = u(36)
+    cy2 = by + u(14) + u(6) + (row_h if hit else 0)
     if hit:
-        row_mid = by + u(32)
+        row_mid = by + u(18) + row_h // 2
         av = _round_avatar(hit["qqid"], hit.get("name") or "?", u(20))
         im.paste(av, (ix, int(row_mid - u(10))), av)
         hx = ix + u(25)
@@ -750,8 +767,7 @@ def _boss_card_draw(im, draw, x0, y, c, ctx):
             draw.text((hx + bw / 2, row_mid + u(0.5)), "击败", font=f_hit_cjk,
                       fill="#ffffff", anchor="mm")
             hx += bw + u(7)
-        dmg = _tilt_text(f"-{hit['damage']:,}", f_hit, _IMG_TAPE_PEACH + (184,),
-                         stroke_width=u(1.5), stroke_fill=_IMG_ACCENT_S)
+        dmg = _damage_text(f"-{hit['damage']:,}", ctx["f_hit_damage"], u(1.6))
         im.paste(dmg, (int(hx), int(row_mid - dmg.height / 2)), dmg)
     if c["chips_empty"]:
         draw.text((ix, cy2 + u(12)), "暂无挑战 · 暂无预约", font=f_small, fill=_IMG_INK3)
@@ -827,7 +843,6 @@ _IMG_GOLD = (168, 128, 42)
 _IMG_INK3 = (185, 159, 164)    # ink-3
 _IMG_WARN_C = (199, 142, 58)   # warn 蜂蜜橙
 _IMG_WARN_TINT = (247, 239, 221)  # warn-tint #f7efdd（挂树 chip 黄底）
-_IMG_TAPE_PEACH = (255, 182, 156)  # 卡头和纸胶带的蜜桃黄（跳伤填充复用）
 
 
 def _blob_mask(size: int) -> Image.Image:
@@ -984,6 +999,26 @@ def load_font_num_bold(size):
 
 def load_font_num(size):
     return _load_first(_NUM_CANDIDATES, size, _font_num_cache)
+
+
+_DAMAGE_FONT = os.path.join(PKG_DIR, "fonts", "LilitaOne-Regular.ttf")
+_font_damage_cache: dict = {}
+
+
+def load_font_damage(size):
+    """跳伤数字字体：包内 Lilita One（OFL），缺失时回退粗体。"""
+    if size in _font_damage_cache:
+        return _font_damage_cache[size]
+    f = None
+    if os.path.isfile(_DAMAGE_FONT):
+        try:
+            f = ImageFont.truetype(_DAMAGE_FONT, size)
+        except OSError:
+            f = None
+    if f is None:
+        f = load_font_bold(size)
+    _font_damage_cache[size] = f
+    return f
 
 
 # ================================================================= emoji 混排
