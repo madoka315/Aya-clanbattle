@@ -360,15 +360,31 @@ def _alpha_rounded_rect(im, box, radius, color, alpha, square_left=False):
              .convert("RGB"), (x0, y0))
 
 
-def _tilt_text(text, font, fill, stroke_width=0, stroke_fill=None, angle=-2):
-    """斜置文字贴纸（RPG 跳伤）：透明底+描边+轻微旋转，返回 RGBA 图。"""
+def _tape_text(text, font, stroke_width=0, stroke_fill=None, angle=-2, period=0.5):
+    """和纸胶带质感的斜置文字贴纸：文字内部填与卡头胶带同款斜条纹，
+    外层用现有配色描边；返回 RGBA 图（透明底）。period 为条纹周期占字高比例。"""
     pad = stroke_width + 6
     scratch = ImageDraw.Draw(Image.new("RGB", (8, 8)))
     l, t, r, b = scratch.textbbox((0, 0), text, font=font, stroke_width=stroke_width)
-    tmp = Image.new("RGBA", (int(r - l + pad * 2), int(b - t + pad * 2)), (0, 0, 0, 0))
-    ImageDraw.Draw(tmp).text((pad - l, pad - t), text, font=font, fill=tuple(fill) + (255,),
+    w, h = int(r - l + pad * 2), int(b - t + pad * 2)
+    # 樱粉×蜜桃 45° 条纹（比卡头胶带更实的同族色，保证小图可辨）
+    base = (240, 158, 180)
+    stripe = (255, 182, 156)
+    pattern = Image.new("RGBA", (w, h), base + (255,))
+    dp = ImageDraw.Draw(pattern)
+    st = max(2, round(h * period))  # 斜纹周期：大间距在小图下也能看清色块
+    for sx in range(-h, w + h, st * 2):
+        dp.polygon([(sx, h), (sx + st, h), (sx + st + h, 0), (sx + h, 0)],
+                   fill=stripe + (255,))
+    mask = Image.new("L", (w, h), 0)
+    ImageDraw.Draw(mask).text((pad - l, pad - t), text, font=font, fill=255)
+    glyph = Image.new("RGBA", (w, h), (0, 0, 0, 0))
+    glyph.paste(pattern, (0, 0), mask)
+    out = Image.new("RGBA", (w, h), (0, 0, 0, 0))
+    ImageDraw.Draw(out).text((pad - l, pad - t), text, font=font, fill=None,
                              stroke_width=stroke_width, stroke_fill=stroke_fill)
-    return tmp.rotate(angle, expand=True, resample=Image.BICUBIC)
+    out.alpha_composite(glyph, (0, 0))
+    return out.rotate(angle, expand=True, resample=Image.BICUBIC)
 
 
 def _sticker_rect(draw, box, radii, fill=None, outline=None, width=1):
@@ -436,11 +452,16 @@ def _boss_card_measure(b: dict, ctx: dict, hit: dict | None = None) -> dict:
     killed = b["health"] == 0 and not b["is_next"]
     pct = 0 if killed or not b["full"] else max(0, min(100, round(b["health"] / b["full"] * 100)))
     ghost_pct = 0
-    # 下周目(当前周目该王已倒)也要画残影：非击败刀的血量变化同样发生在这一条血条上
-    if hit and not hit.get("defeat") and b["full"]:
-        ghost_pct = max(0, min(100, round(hit["before"] / b["full"] * 100)))
-        if ghost_pct <= pct:
-            ghost_pct = 0
+    # 下周目(当前周目该王已倒)也要画残影：非击败刀的血量变化同样发生在这一条血条上。
+    # 击败刀仅当王没有进入下周目（卡片显示 0/0）时，用击破前满血补出“最后一击”残影；
+    # 若下周目有血（满血或已被磨血），血条已换成下周目的，不再画上一刀的残影。
+    if hit and b["full"]:
+        if not hit.get("defeat"):
+            ghost_pct = max(0, min(100, round(hit["before"] / b["full"] * 100)))
+    elif hit and hit.get("defeat") and hit.get("full_before"):
+        ghost_pct = max(0, min(100, round(hit["before"] / hit["full_before"] * 100)))
+    if ghost_pct <= pct:
+        ghost_pct = 0
     chips = []
     for s in b["subs"]:
         # web subChip：<b>预约</b>名字:note，teal 底（QQ 侧加头像，名字前补空格分隔）
@@ -744,8 +765,8 @@ def _boss_card_draw(im, draw, x0, y, c, ctx):
             draw.text((hx + bw / 2, row_mid + u(0.5)), "击败", font=f_hit_cjk,
                       fill="#ffffff", anchor="mm")
             hx += bw + u(7)
-        dmg = _tilt_text(f"-{hit['damage']:,}", f_hit, _IMG_SHU,
-                         stroke_width=u(1.5), stroke_fill=_IMG_GOLD)
+        dmg = _tape_text(f"-{hit['damage']:,}", f_hit, stroke_width=u(1.5),
+                         stroke_fill=_IMG_ACCENT_S, period=0.5)
         im.paste(dmg, (int(hx), int(row_mid - dmg.height / 2)), dmg)
     if c["chips_empty"]:
         draw.text((ix, cy2 + u(12)), "暂无挑战 · 暂无预约", font=f_small, fill=_IMG_INK3)
